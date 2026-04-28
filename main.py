@@ -1,21 +1,15 @@
 """
-Desktop God Agent — 主入口程序
+Desktop God Agent v0.2 — 主入口程序
 
-启动流程：
-  1. 加载配置 (.env)
-  2. 初始化各子系统
-     ├── 模型网关 (DeepSeek + Ollama + Gemini)
-     ├── 感知系统 (屏幕截图 + UIA + OCR)
-     ├── 执行引擎 (鼠标键盘 + Win32)
-     ├── 双鼠标系统 (透明窗口 + 蓝光标)
-     ├── 世界模型 (状态快照 + 变化检测)
-     ├── 记忆系统 (三层记忆 + 晋升)
-     ├── 多Agent系统 (5角色编排)
-     └── 安全控制 (急停 + 审计 + 权限)
-  3. 启动监控循环
-  4. 进入命令循环（等待用户指令）
+架构（12卷全部实现）：
+  模型层：DeepSeek Flash/Pro + Gemini 2.5 Flash (视觉)
+  感知层：mss截图 + UIA元素树 + PaddleOCR
+  执行层：Win32鼠标键盘(SHM贝塞尔)
+  展示层：双鼠标(淡蓝70%) + 悬浮面板
+  认知层：世界模型 + 三层记忆 + 圈养工种 + 联网学习
+  控制层：安全急停 + 审计日志
 
-使用方式：
+启动方式：
   python main.py                    # 交互模式
   python main.py "打开Chrome"       # 单指令模式
   python main.py --headless         # 无GUI模式
@@ -24,219 +18,255 @@ Desktop God Agent — 主入口程序
 import sys
 import os
 import time
+import asyncio
 import logging
 import argparse
+from pathlib import Path
 
-# ---- 确保项目根目录在路径中 ----
+# 确保项目根目录在路径中
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, PROJECT_ROOT)
 
-# ============================================================
-# 日志配置
-# ============================================================
 
 def setup_logging(level: str = "INFO") -> None:
-    """配置日志系统"""
+    """使用统一日志系统"""
     from src.config.settings import settings
-    
-    log_dir = Path(settings.LOG_DIR)
-    log_dir.mkdir(parents=True, exist_ok=True)
-    
-    # 控制台输出
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setFormatter(logging.Formatter(
-        '%(asctime)s | %(name)-20s | %(levelname)-5s | %(message)s',
-        datefmt='%H:%M:%S',
-    ))
-    
-    # 文件输出
-    from datetime import datetime
-    log_file = log_dir / f"agent_{datetime.now().strftime('%Y-%m-%d')}.log"
-    file_handler = logging.FileHandler(log_file, encoding='utf-8')
-    file_handler.setFormatter(logging.Formatter(
-        '%(asctime)s | %(name)-30s | %(levelname)-8s | %(funcName)-20s | %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S',
-    ))
-    
-    root_logger = logging.getLogger()
-    root_logger.setLevel(getattr(logging, level.upper(), logging.INFO))
-    root_logger.addHandler(console_handler)
-    root_logger.addHandler(file_handler)
-
-
-from pathlib import Path
+    from src.utils.logger import setup_logging as _setup
+    _setup(
+        level=level,
+        log_dir=str(settings.LOG_DIR),
+        console=True,
+        file_log=True,
+    )
 
 
 class DesktopGodAgent:
     """
-    Desktop God Agent 主类
+    Desktop God Agent — 总控制器
     
-    整合所有子系统的总控制器，
+    整合12卷设计文档中的所有子系统，
     提供统一的用户接口和任务执行入口。
+    
+    v0.2 更新：
+    - 去掉Ollama，全面使用 DeepSeek V4 Flash/Pro + Gemini 2.5 Flash
+    - 新增圈养体系(5工种) + 联网学习 + 产品交互系统
+    - 工具层统一异常/日志/性能监控
     """
 
     def __init__(self):
-        self._logger = logging.getLogger("GodAgent")
+        self._log = logging.getLogger("GodAgent")
         
-        # 子系统实例（延迟初始化）
-        self._gateway = None
-        self._screencap = None
-        self._uia_scanner = None
-        self._ocr = None
-        self._executor = None
-        self._dual_mouse = None
-        self._world_model = None
-        self._memory = None
-        self._orchestrator = None
-        self._safety = None
+        # ---- 核心子系统 ----
+        self._gateway = None           # 模型网关
+        self._screencap = None         # 屏幕截图
+        self._uia_scanner = None       # UIA扫描
+        self._ocr = None               # OCR引擎
+        self._executor = None          # 执行引擎
+        self._dual_mouse = None        # 双鼠标
+        self._world_model = None       # 世界模型
+        self._memory = None            # 三层记忆
+        
+        # ---- v0.2 新增子系统 ----
+        self._ranch = None             # 圈养体系总控
+        self._learning = None          # 联网学习
+        self._feedback_mgr = None      # 反馈管理器
+        self._confirm_center = None    # 确认中心
+        self._result_cards = None      # 结果卡片
+        self._templates = None         # 模板管理
+        self._history = None           # 任务历史
+        self._command_input = None     # 命令解析
+        self._overlay_panel = None     # 悬浮面板
+        self._safety = None            # 安全控制
+        self._orchestrator = None      # Agent编排器
         
         self._running = False
+        self._init_count = 0
+        self._total_subsystems = 15
 
     def initialize(self) -> bool:
-        """
-        初始化所有子系统
-        
-        Returns:
-            True表示全部成功，False表示部分失败
-        """
-        self._logger.info("=" * 60)
-        self._logger.info("Desktop God Agent 初始化中...")
-        self._logger.info("=" * 60)
-
+        """初始化所有子系统"""
         from src.config.settings import settings
         
-        # 检查配置完整性
+        self._log.info("=" * 60)
+        self._log.info("🚀 Desktop God Agent v0.2 初始化中...")
+        self._log.info("=" * 60)
+
         missing = settings.validate()
         if missing:
-            self._logger.warning(f"缺少配置项: {missing}，相关功能可能不可用")
+            self._log.warning(f"⚠ 缺少配置项: {missing}")
         
         settings.ensure_dirs()
 
-        success_count = 0
-        total = 9
-
-        # 1. 模型网关
+        # === 1. 模型网关 (Flash + Pro + Gemini Vision) ===
         try:
             from src.gateway.model_gateway import get_gateway
             self._gateway = get_gateway()
-            success_count += 1
-            self._logger.info("[✓] 模型网关")
+            hc = self._gateway.health_check()
+            models_ok = sum(1 for m in hc.values() if m.get("ok"))
+            self._log.info(f"[✓] 模型网关 ({models_ok}/3 后端就绪)")
+            self._init_count += 1
         except Exception as e:
-            self._logger.error(f"[✗] 模型网关: {e}")
+            self._log.error(f"[✗] 模型网关: {e}")
 
-        # 2. 屏幕截图
+        # === 2. 屏幕截图 ===
         try:
             from src.perception.screenshot import get_screencap
             self._screencap = get_screencap()
             w, h = self._screencap.screen_size
-            self._logger.info(f"[✓] 屏幕截图 ({w}x{h})")
-            success_count += 1
+            self._log.info(f"[✓] 屏幕截图 ({w}x{h})")
+            self._init_count += 1
         except Exception as e:
-            self._logger.error(f"[✗] 屏幕截图: {e}")
+            self._log.error(f"[✗] 屏幕截图: {e}")
 
-        # 3. UIA扫描器
+        # === 3. UIA扫描器 ===
         try:
             from src.perception.uia_scanner import UIAScanner
             self._uia_scanner = UIAScanner()
-            self._logger.info("[✓] UIA扫描器")
-            success_count += 1
+            self._log.info("[✓] UIA扫描器")
+            self._init_count += 1
         except Exception as e:
-            self._logger.error(f"[✗] UIA扫描器: {e}")
+            self._log.error(f"[✗] UIA扫描器: {e}")
 
-        # 4. OCR引擎
+        # === 4. OCR引擎 ===
         try:
             from src.perception.ocr_engine import get_ocr
             self._ocr = get_ocr()
-            self._logger.info("[✓] OCR引擎")
-            success_count += 1
+            self._log.info("[✓] OCR引擎")
+            self._init_count += 1
         except Exception as e:
-            self._logger.warning(f"[△] OCR引擎: {e} (可选)")
+            self._log.warning(f"[△] OCR引擎: {e} (可选)")
 
-        # 5. 执行引擎
+        # === 5. 执行引擎 ===
         try:
             from src.execution.executor import get_executor
             self._executor = get_executor()
-            self._logger.info("[✓] 执行引擎")
-            success_count += 1
+            self._log.info("[✓] 执行引擎 (SHM贝塞尔)")
+            self._init_count += 1
         except Exception as e:
-            self._logger.error(f"[✗] 执行引擎: {e}")
+            self._log.error(f"[✗] 执行引擎: {e}")
 
-        # 6. 双鼠标系统
+        # === 6. 双鼠标系统 ===
         try:
             from src.dual_mouse.ai_cursor import DualMouseSystem
             self._dual_mouse = DualMouseSystem()
             if self._dual_mouse.start():
-                self._logger.info("[✓] 双鼠标系统")
-                success_count += 1
+                self._log.info("[✓] 双鼠标系统 (#409CFF 70%透明)")
+                self._init_count += 1
             else:
-                self._logger.warning("[△] 双鼠标系统: 启动失败（可选）")
                 self._dual_mouse = None
+                self._log.warning("[△] 双鼠标: 启动失败(可选)")
         except Exception as e:
-            self._logger.warning(f"[△] 双鼠标系统: {e} (可选)")
+            self._log.warning(f"[△] 双鼠标: {e} (可选)")
             self._dual_mouse = None
 
-        # 7. 世界模型
+        # === 7. 世界模型 ===
         try:
             from src.world_model.world_model import WorldModel
             self._world_model = WorldModel()
-            self._logger.info("[✓] 世界模型")
-            success_count += 1
+            self._log.info("[✓] 世界模型 (三层状态+Delta)")
+            self._init_count += 1
         except Exception as e:
-            self._logger.error(f"[✗] 世界模型: {e}")
+            self._log.error(f"[✗] 世界模型: {e}")
 
-        # 8. 记忆系统
+        # === 8. 三层记忆系统 ===
         try:
             from src.memory.memory_system import MemorySystem
             self._memory = MemorySystem(db_path=settings.MEMORY_DB_PATH)
             stats = self._memory.get_stats()
-            self._logger.info(f"[✓] 记忆系统 ({stats['total']} 条记忆)")
-            success_count += 1
+            self._log.info(f"[✓] 三层记忆 ({stats['total']}条)")
+            self._init_count += 1
         except Exception as e:
-            self._logger.error(f"[✗] 记忆系统: {e}")
+            self._log.error(f"[✗] 记忆系统: {e}")
 
-        # 9. 安全控制
+        # === 9. 圈养体系 (v0.2新增) ===
+        if self._gateway:
+            try:
+                from src.model_ranch.controller import RanchController
+                self._ranch = RanchController(gateway=self._gateway)
+                asyncio.get_event_loop().run_until_complete(self._ranch.initialize())
+                self._log.info("[✓] 圈养体系 (5工种已热身)")
+                self._init_count += 1
+            except Exception as e:
+                self._log.error(f"[✗] 圈养体系: {e}")
+
+        # === 10. 联网学习 (v0.2新增) ===
+        if self._gateway:
+            try:
+                from src.learning.learning_system import LearningSystem
+                self._learning = LearningSystem(gateway=self._gateway, memory=self._memory)
+                self._log.info("[✓] 联网学习系统")
+                self._init_count += 1
+            except Exception as e:
+                self._log.error(f"[✗] 联网学习: {e}")
+
+        # === 11-14. 产品交互系统 (v0.2新增) ===
+        try:
+            from src.product_ui.task_feedback import FeedbackManager
+            from src.product_ui.confirmation_center import ConfirmationCenter
+            from src.product_ui.result_cards import ResultCards
+            from src.product_ui.templates import TemplateManager
+            from src.product_ui.task_history import TaskHistoryCenter
+            from src.product_ui.command_input import CommandInput
+            from src.product_ui.overlay_panel import OverlayPanel
+            
+            self._feedback_mgr = FeedbackManager()
+            self._confirm_center = ConfirmationCenter()
+            self._result_cards = ResultCards()
+            self._templates = TemplateManager()
+            self._history = TaskHistoryCenter()
+            self._command_input = CommandInput()
+            self._overlay_panel = OverlayPanel()
+            
+            self._log.info("[✓] 产品交互系统 (命令/反馈/确认/模板/历史)")
+            self._init_count += 1
+        except Exception as e:
+            self._log.warning(f"[△] 产品交互系统部分加载失败: {e}")
+
+        # === 15. 安全控制 ===
         try:
             from src.security.safety import SafetySystem
             self._safety = SafetySystem(audit_dir=settings.AUDIT_LOG_DIR)
             self._safety.start_stop_listener(settings.EMERGENCY_STOP_KEY)
-            self._logger.info(f"[✓] 安全控制 (急停: {settings.EMERGENCY_STOP_KEY})")
-            success_count += 1
+            self._log.info(f"[✓] 安全控制 (急停:{settings.EMERGENCY_STOP_KEY})")
+            self._init_count += 1
         except Exception as e:
-            self._logger.error(f"[✗] 安全控制: {e}")
+            self._log.error(f"[✗] 安全控制: {e}")
 
-        # Agent编排器（依赖上面所有）
-        if self._gateway and self._executor:
+        # === Agent编排器（依赖上面核心模块） ===
+        if self._gateway and self._executor and self._ranch:
             try:
                 from src.agent.agents import get_orchestrator
                 self._orchestrator = get_orchestrator()
                 self._orchestrator.initialize(
                     model_gateway=self._gateway,
                     executor=self._executor,
+                    ranch_controller=self._ranch,
+                    learning_system=self._learning,
+                    memory_system=self._memory,
                 )
-                self._logger.info("[✓] Agent编排器")
+                self._log.info("[✓] Agent编排器")
             except Exception as e:
-                self._logger.error(f"[✗] Agent编排器: {e}")
+                self._log.error(f"[✗] Agent编排器: {e}")
 
-        # 启动后台监控
+        # === 启动后台监控 ===
         if self._world_model:
             self._world_model.start_monitoring(interval_sec=2.0)
 
-        self._logger.info("=" * 60)
-        self._logger.info(f"初始化完成: {success_count}/{total+1} 个子系统就绪")
-        self._logger.info("=" * 60)
+        # === 打印启动摘要 ===
+        ready_rate = self._init_count / self._total_subsystems * 100
+        self._log.info("=" * 60)
+        self._log.info(
+            f"✅ 初始化完成: {self._init_count}/{self._total_subsystems} 子系统 "
+            f"({ready_rate:.0f}% 就绪)"
+        )
+        self._log.info(f"   模型: DeepSeek-V4-Flash/Pro + Gemini-2.5-Flash(Vision)")
+        self._log.info(f"   工种: 浏览器/文件/Office/恢复/搜索 (圈养体系)")
+        self._log.info("=" * 60)
 
-        return success_count >= total // 2  # 超过一半就算可用
+        return ready_rate >= 50  # 超过一半就算可用
 
     def run(self, instruction: str = "") -> dict:
-        """
-        执行用户指令或进入交互模式
-        
-        Args:
-            instruction: 单条指令，空字符串则进入交互模式
-            
-        Returns:
-            执行结果字典
-        """
+        """执行用户指令或进入交互模式"""
         if not self._running:
             self.initialize()
             self._running = True
@@ -247,141 +277,189 @@ class DesktopGodAgent:
             return self._interactive_loop()
 
     def _execute_single(self, instruction: str) -> dict:
-        """执行单条指令"""
-        self._logger.info(f"\n{'─'*50}")
-        self._logger.info(f">>> 用户指令: {instruction}")
-        self._logger.info(f"{'─'*50}\n")
+        """执行单条指令（完整流程）"""
+        self._log.info(f"\n{'─'*50}")
+        self._log.info(f">>> {instruction}")
+        self._log.info(f"{'─'*50}\n")
 
-        start_time = time.time()
+        start = time.time()
+        task_id = f"task_{int(time.time() % 100000)}"
 
         try:
-            # 通过Agent编排器运行任务
-            if self._orchestrator:
-                import asyncio
-                
-                try:
-                    loop = asyncio.get_running_loop()
-                except RuntimeError:
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
+            # Step 1: 命令解析
+            cmd = self._command_input.parse(instruction)
 
-                result = loop.run_until_complete(
+            # Step 2: 创建反馈跟踪
+            fb = self._feedback_mgr.create_task(
+                task_id=task_id,
+                description=cmd.target or instruction,
+            )
+            self._feedback_mgr.push(task_id, "开始分析指令...", "info")
+
+            # Step 3: 收集上下文
+            context = self._gather_context()
+
+            # Step 4: 通过圈养体系或Agent编排执行
+            if self._ranch and cmd.command_type in ("natural",):
+                result = asyncio.get_event_loop().run_until_complete(
+                    self._ranch.dispatch(instruction, context)
+                )
+            elif self._orchestrator:
+                result = asyncio.get_event_loop().run_until_complete(
                     self._orchestrator.run_task(instruction)
                 )
-                
-                elapsed = (time.time() - start_time) * 1000
-                result['elapsed_ms'] = elapsed
-                
-                self._logger.info(f"\n{'='*50}")
-                status_icon = '🟢' if result.get('status') == 'completed' else '🟡'
-                self._logger.info(f"{status_icon} 完成 | "
-                           f"{result.get('completed_steps', 0)}"
-                           f"/{result.get('total_steps', 0)} 步 | "
-                           f"{elapsed:.0f}ms")
-                self._logger.info(f"{'='*50}\n")
-                
-                return result
-            
-            else:
-                # 降级：直接用模型网关处理
-                from src.gateway.model_gateway import ChatMessage
-                resp = self._gateway.chat([
-                    ChatMessage(role="user", content=instruction)
-                ])
-                
-                return {
-                    'status': 'completed',
-                    'response': resp.content,
-                    'model': resp.model_name,
-                    'latency_ms': resp.latency_ms,
+            elif self._gateway:
+                # 最简降级：直接问模型
+                resp = self._gateway.chat(user_message=instruction, tier="flash")
+                result = {
+                    "status": "completed",
+                    "response": resp.content,
+                    "model": resp.model_name,
+                    "latency_ms": resp.latency_ms,
                 }
+            else:
+                result = {"status": "error", "error": "No backend available"}
+
+            elapsed = (time.time() - start) * 1000
+            result["elapsed_ms"] = round(elapsed, 0)
+
+            # Step 5: 记录结果
+            status_icon = "🟢" if result.get("status") == "done" or result.get("status") == "completed" else "🟡"
+            self._log.info(f"\n{status_icon} 完成 | {elapsed:.0f}ms")
+
+            # Step 6: 反馈 & 结果卡片
+            self._feedback_mgr.push(task_id, "任务完成", "success",
+                                     progress=100, confidence=0.9)
+            self._feedback_mgr.complete(task_id, success=True)
+
+            if self._result_cards:
+                card = self._result_cards.create(
+                    title=instruction[:50],
+                    status="success" if "error" not in result else "failed",
+                    summary=result.get("response", str(result))[:200],
+                    time_spent_s=elapsed / 1000,
+                )
+
+            # Step 7: 写入历史
+            if self._history:
+                self._history.record(
+                    instruction=instruction,
+                    status=result.get("status", "unknown"),
+                    started_at=start,
+                    completed_at=time.time(),
+                    worker=result.get("_worker_used", ""),
+                    estimated_time_saved=elapsed / 1000 * 3,  # 估算节省3倍时间
+                )
+
+            return result
 
         except KeyboardInterrupt:
-            self._logger.warning("\n[!] 操作被用户中断")
-            return {'status': 'interrupted', 'error': 'KeyboardInterrupt'}
-            
+            self._log.warning("\n[!] 用户中断操作")
+            self._feedback_mgr.complete(task_id, success=False)
+            return {"status": "interrupted"}
         except Exception as e:
-            self._logger.error(f"\n[✗] 执行错误: {e}")
-            import traceback
-            traceback.print_exc()
-            return {'status': 'error', 'error': str(e)}
+            self._log.error(f"[✗] 执行错误: {e}", exc_info=True)
+            self._feedback_mgr.complete(task_id, success=False)
+            return {"status": "error", "error": str(e)}
+
+    def _gather_context(self) -> dict:
+        """收集当前上下文（屏幕、前台应用等）"""
+        ctx = {}
+        try:
+            if self._screencap:
+                img = self._screencap.capture()
+                ctx["has_screenshot"] = True
+            if self._world_model:
+                ctx["foreground_app"] = self._world_model.get_foreground_app()
+                ctx["processes"] = [p[:30] for p in self._world_model.get_running_processes()[:10]]
+        except Exception:
+            pass
+        return ctx
 
     def _interactive_loop(self) -> dict:
         """交互式命令循环"""
-        self._logger.info("\n" + "╔" + "═"*58 + "╗")
-        self._logger.info("║" + "  Desktop God Agent 交互模式".center(58) + "║")
-        self._logger.info("║" + "  输入自然语言指令，Ctrl+C 或 'exit' 退出".center(56) + " ║")
-        self._logger.info("╚" + "═"*58 + "╝\n")
+        self._log.info("\n" + "╔" + "═"*58 + "╗")
+        self._log.info("║" + "  Desktop God Agent v0.2 交互模式".center(56) + " ║")
+        self._log.info("╠" + "═"*58 + "╣")
+        self._log.info("║  输入自然语言 | Ctrl+C 或 exit 退出".center(54) + "║")
+        self._log.info("╚" + "═"*58 + "╝\n")
 
-        results_history = []
-        
         while self._running:
             try:
                 user_input = input("🤖 GodAgent > ").strip()
                 
                 if not user_input:
                     continue
-                    
-                if user_input.lower() in ('exit', 'quit', 'q', '退出'):
-                    self._logger.info("用户请求退出")
+                
+                lower = user_input.lower()
+                
+                if lower in ('exit', 'quit', 'q', '退出'):
                     break
-                    
-                if user_input.lower() == 'status':
+                
+                if lower == 'status':
                     self._print_status()
                     continue
-                    
-                if user_input.lower().startswith('mem'):
+                
+                if lower.startswith('mem'):
                     self._print_memory(user_input)
                     continue
-                    
-                if user_input.lower() == 'help':
+                
+                if lower == 'help':
                     self._print_help()
+                    continue
+                
+                if lower == '模板' or lower == '/模板':
+                    self._print_templates()
+                    continue
+                
+                if lower == '历史':
+                    self._print_history()
                     continue
 
                 result = self._execute_single(user_input)
-                results_history.append(result)
                 
-                # 显示结果摘要
                 if 'response' in result:
-                    print(f"\n📝 回答:\n{result['response']}\n")
-                elif 'status' in result:
-                    steps = f"{result.get('completed_steps', 0)}/{result.get('total_steps', 0)}"
-                    print(f"\n✅ 状态: {result['status']} | 步骤: {steps}\n")
+                    print(f"\n📝 {result['response']}\n")
 
             except EOFError:
                 break
             except KeyboardInterrupt:
-                print("\n(按 Ctrl+C 强制退出请再次按下)")
-                time.sleep(0.5)
+                print("\n(再按一次Ctrl+C强制退出)")
 
         self.shutdown()
-        return {'status': 'exited', 'history_length': len(results_history)}
+        return {"status": "exited"}
 
-    def _print_status(self) -> None:
-        """打印系统状态"""
+    # ---- 显示方法 ----
+
+    def _print_status(self):
+        """打印系统状态面板"""
         from src.config.settings import settings
+        mem_stats = self._memory.get_stats() if self._memory else {}
+        ranch_stats = self._ranch.get_status() if self._ranch else {}
+        
         print(f"""
-┌────────────────────────────────────────────┐
-│  Desktop God Agent 系统状态                 │
-├────────────────────────────────────────────┤
-│  模型网关:   {'● 就绪' if self._gateway else '○ 未连接'}                        │
-│  屏幕感知:   {'● 就绪' if self._screencap else '○ 未连接'} ({self._screencap.screen_size if self._screencap else '?'})              │
-│  UIA扫描:    {'● 就绪' if self._uia_scanner else '○ 未连接'}                        │
-│  OCR识别:    {'● 就绪' if self._ocr else '○ 未连接'}                          │
-│  执行引擎:   {'● 就绪' if self._executor else '○ 未连接'}                        │
-│  双鼠标:     {'● 运行中' if self._dual_mouse else '○ 未启动'}                      │
-│  世界模型:   {'● 监控中' if self._world_model and self._world_model._monitoring else '○ 待机'}                   │
-│  记忆系统:   {'● 就绪' if self._memory else '○ 未连接'} ({self._memory.get_stats()['total'] if self._memory else '?'}条)           │
-│  安全控制:   {'● 急停已激活' if self._safety and not self._safety.is_stopped else '○ 急停未激活'}               │
-│  Agent团队:  {'● 就绪' if self._orchestrator else '○ 未连接'}                        │
-├────────────────────────────────────────────┤
-│  急停热键:   {settings.EMERGENCY_STOP_KEY:<34} │
-│  前台应用:   {(self._world_model.get_foreground_app() or '-')[:34]:<34} │
-│  审计日志:   {self._safety.get_today_log_count() if self._safety else 0} 条今日                     │
-└────────────────────────────────────────────┘
-""")
+┌──────────────────────────────────────────────────┐
+│  Desktop God Agent v0.2 — 系统状态               │
+├──────────────────────────────────────────────────┤
+│  模型网关: {'● 就绪' if self._gateway else '○ 未连接'}                              │
+│  屏幕感知: {'● 就绪' if self._screencap else '○ 未连接'} ({self._screencap.screen_size if self._screencap else '?'})                   │
+│  UIA扫描:  {'● 就绪' if self._uia_scanner else '○ 未连接'}                              │
+│  OCR识别:  {'● 就绪' if self._ocr else '○ 未连接'}                              │
+│  执行引擎: {'● 就绪' if self._executor else '○ 未连接'}                              │
+│  双鼠标:   {'● 运行中' if self._dual_mouse else '○ 未启动'}                            │
+│  世界模型: {'● 监控中' if self._world_model else '○ 待机'}                             │
+│  三层记忆: {'● 就绪' if self._memory else '○ 未连接'} ({mem_stats.get('total', '?')}条)                      │
+│  圈养体系: {'● 5工种就绪' if self._ranch else '○ 未连接'}                          │
+│  学习系统: {'● 就绪' if self._learning else '○ 未连接'}                              │
+│  安全控制: {'● 急停激活' if self._safety else '○ 未激活'} ({settings.EMERGENCY_STOP_KEY})              │
+├──────────────────────────────────────────────────┤
+│  急停热键: {settings.EMERGENCY_STOP_KEY:<36} │
+│  今日任务: {self._history.get_today().__len__() if self._history else 0} 个                               │
+│  已有模板: {self._templates.count if self._templates else 0} 个                                │
+│  审计日志: {self._safety.get_today_log_count() if self._safety else 0} 条                           │
+└──────────────────────────────────────────────────┘""")
 
-    def _print_memory(self, cmd: str) -> None:
+    def _print_memory(self, cmd: str):
         """打印/搜索记忆"""
         if not self._memory:
             print("(记忆系统未启用)")
@@ -389,109 +467,122 @@ class DesktopGodAgent:
         
         parts = cmd.split(maxsplit=1)
         query = parts[1].strip() if len(parts) > 1 else ""
-        
         results = self._memory.search(query or "*", limit=10)
         
-        if not results:
-            print(f"(无匹配记忆: '{query}')")
+        print(f"\n📚 记忆 ({len(results)}条):\n")
+        for entry in results:
+            bar = "█" * int(getattr(entry, 'score', 0.5) * 10) + "░" * (10 - int(getattr(entry, 'score', 0.5) * 10))
+            print(f"  [{getattr(entry, 'tier', {}).value if hasattr(entry,'tier') else '?'}] {getattr(entry, 'title', '')[:40]}")
+            print(f"  评分:[{bar}] | 内容:{str(getattr(entry, '', ''))[:80]}...\n")
+
+    def _print_templates(self):
+        """打印可用模板"""
+        if not self._templates:
+            print("(模板系统未启用)")
             return
         
-        print(f"\n📚 记忆搜索结果 ({len(results)}条):\n")
-        for entry in results[:10]:
-            score_bar = "█" * int(entry.score * 10) + "░" * (10 - int(entry.score * 10))
-            print(f"  [{entry.tier.value}] {entry.title[:40]}")
-            print(f"  评分: [{score_bar}] {entry.score:.2f} | "
-                  f"成功:{entry.success_count} 失败:{entry.failure_count}")
-            print(f"  内容: {entry.content[:80]}...")
-            print()
+        templates = self._templates.list_all()
+        print(f"\n📋 可用模板 ({len(templates)}个):\n")
+        for t in templates:
+            runs = f"{t.run_count}次运行"
+            avg = f"{t.avg_time_s:.0f}s平均" if t.avg_time_s > 0 else ""
+            print(f"  🔹 {t.name}: {t.description[:40]} [{runs}] [{avg}]")
+        print()
+
+    def _print_history(self):
+        """打印最近任务历史"""
+        if not self._history:
+            print("(历史记录未启用)")
+            return
+        
+        recent = self._history.get_recent(10)
+        stats = self._history.get_statistics(1)
+        
+        print(f"\n📊 任务统计:\n")
+        print(f"  今日: {stats['total_tasks']}个 | 成功率: {stats['success_rate']}")
+        if float(stats.get('total_time_saved_s', 0)) > 0:
+            print(f"  节省: {stats.get('total_time_saved_human', '-')}")
+        print(f"\n📝 最近任务:\n")
+        for r in recent:
+            icon = {"success": "✅", "failed": "❌", "partial": "⚠️"}.get(r.status, "🔄")
+            print(f"  {icon} {r.instruction[:45]} ({r.date_str})")
+        print()
 
     @staticmethod
-    def _print_help() -> None:
+    def _print_help():
         print("""
-╔══════════════════════════════════════════╗
-║  可用命令                                   ║
-╠══════════════════════════════════════════╣
-║  <自然语言指令>  执行任务                  ║
-║  status          查看系统状态              ║
-║  mem [关键词]    搜索记忆                  ║
-║  help            显示此帮助                ║
-║  exit / quit     退出系统                  ║
-║                                            ║
-║  Ctrl+Alt+Shift+Q  触发紧急停止           ║
-╚══════════════════════════════════════════╝
-""")
+╔════════════════════════════════════════════════╗
+║  Desktop God Agent v0.2 — 可用命令               ║
+╠════════════════════════════════════════════════╣
+║  <自然语言指令>    执行任务                       ║
+║  /日报 /清理桌面    快捷指令                       ║
+║  status            查看系统状态                     ║
+║  mem [关键词]      搜索记忆                         ║
+║  模板               列出可用模板                     ║
+║  历史               查看任务历史                     ║
+║  help              显示此帮助                       ║
+║  exit / quit       退出系统                         ║
+║                                                 ║
+║  Ctrl+Alt+Shift+Q 触发紧急停止                    ║
+╚════════════════════════════════════════════════╝""")
 
-    def shutdown(self) -> None:
-        """优雅关闭所有子系统"""
-        self._logger.info("\n正在关闭...")
+    def shutdown(self):
+        """优雅关闭"""
+        self._log.info("\n正在关闭所有子系统...")
         self._running = False
 
-        shutdown_order = [
+        order = [
             ("安全控制", lambda: self._safety.reset_emergency() if self._safety else None),
             ("世界模型", lambda: self._world_model.stop_monitoring() if self._world_model else None),
             ("双鼠标", lambda: self._dual_mouse.stop() if self._dual_mouse else None),
+            ("圈养体系", lambda: asyncio.get_event_loop().run_until_complete(
+                self._ranch.shutdown()) if self._ranch else None),
             ("截图器", lambda: self._screencap.close() if self._screencap else None),
             ("UIA扫描", lambda: self._uia_scanner.stop_monitoring() if self._uia_scanner else None),
             ("记忆系统", lambda: self._memory.close() if self._memory else None),
         ]
 
-        for name, fn in shutdown_order:
+        for name, fn in order:
             try:
                 fn()
-                self._logger.info(f"[✓] {name} 已关闭")
+                self._log.info(f"[✓] {name}")
             except Exception as e:
-                self._logger.warning(f"[△] {name}: {e}")
+                self._log.warning(f"[△] {name}: {e}")
 
-        self._logger.info("Desktop God Agent 已关闭。再见！")
+        self._log.info("👋 Desktop God Agent v0.2 已关闭。再见！")
 
 
 def main():
-    """CLI入口"""
     parser = argparse.ArgumentParser(
-        description="Desktop God Agent - 你的桌面AI自治代理",
+        description="Desktop God Agent v0.2 — 你的桌面AI自治代理",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例:
   python main.py                              # 交互模式
   python main.py "打开Chrome并访问百度"          # 单指令
-  python main.py --headless                    # 无GUI
-  python main.py --log-level DEBUG             # 调试日志
-""",
+  python main.py --headless                    # 无GUI模式
+  python main.py --log-level DEBUG             # 调试日志""",
     )
-    parser.add_argument(
-        "command", nargs="?", default="",
-        help="要执行的指令（留空则进入交互模式）"
-    )
-    parser.add_argument("--headless", action="store_true",
-                       help="无头模式（不启动双鼠标等GUI）")
+    parser.add_argument("command", nargs="?", default="", help="要执行的指令")
+    parser.add_argument("--headless", action="store_true", help="无头模式")
     parser.add_argument("--log-level", default="INFO",
-                       choices=["DEBUG", "INFO", "WARNING", "ERROR"],
-                       help="日志级别")
+                        choices=["DEBUG", "INFO", "WARNING", "ERROR"])
     args = parser.parse_args()
 
-    # 配置日志
     setup_logging(args.log_level)
-    
-    logger = logging.getLogger("GodAgent")
-    
-    # 启动
+    log = logging.getLogger("GodAgent")
+
     agent = DesktopGodAgent()
-    
-    if args.headless:
-        logger.info("Headless mode: dual mouse disabled")
-    
+
     try:
         result = agent.run(args.command)
-        
-        # 如果是单指令模式，打印结果后退出
         if args.command:
             if 'response' in result:
                 print(result['response'])
             elif 'status' in result:
-                exit_code = 0 if result['status'] in ('completed', 'partial') else 1
-                sys.exit(exit_code)
+                sys.exit(0 if result['status'] in ('completed', 'done', 'partial') else 1)
     except Exception as e:
-        logger.critical(f"Fatal error: {e}", exc_info=True)
+        log.critical(f"Fatal: {e}", exc_info=True)
         sys.exit(1)
 
 

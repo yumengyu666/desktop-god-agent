@@ -34,16 +34,12 @@ class Settings:
     DEEPSEEK_API_KEYS = list(dict.fromkeys(DEEPSEEK_API_KEYS))
 
     DEEPSEEK_BASE_URL: str = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
-    DEEPSEEK_FLASH_MODEL: str = os.getenv("DEEPSEEK_FLASH_MODEL", "deepseek-chat")
-    DEEPSEEK_PRO_MODEL: str = os.getenv("DEEPSEEK_PRO_MODEL", "deepseek-reasoner")
+    DEEPSEEK_FLASH_MODEL: str = os.getenv("DEEPSEEK_FLASH_MODEL", "deepseek-v4-flash")
+    DEEPSEEK_PRO_MODEL: str = os.getenv("DEEPSEEK_PRO_MODEL", "deepseek-v4-pro")
 
     # ---- Google AI (Gemini) 视觉模型 ----
     GOOGLE_AI_API_KEY: str = os.getenv("GOOGLE_AI_API_KEY", "")
-    GOOGLE_AI_MODEL: str = os.getenv("GOOGLE_AI_MODEL", "gemini-3-flash-preview")
-
-    # ---- Ollama 本地模型 ----
-    OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-    OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "deepseek-r1:8b")
+    GOOGLE_AI_MODEL: str = os.getenv("GOOGLE_AI_MODEL", "gemini-2.5-flash")
 
     # ---- GitHub ----
     GITHUB_TOKEN: str = os.getenv("GITHUB_TOKEN", "")
@@ -91,10 +87,8 @@ class Settings:
         missing = []
         if not cls.DEEPSEEK_API_KEYS or not any(cls.DEEPSEEK_API_KEYS):
             missing.append("DEEPSEEK_API_KEY")
-        if not cls.GOOGLE_AI_API_KEY:
-            missing.append("GOOGLE_AI_API_KEY")
-        if not cls.GITHUB_TOKEN and not cls.GITHUB_TOKEN_PAT:
-            missing.append("GITHUB_TOKEN")
+        # Gemini视觉可选（无图片任务时不需要）
+        # GitHub可选
         return missing
 
     @classmethod
