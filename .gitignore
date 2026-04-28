@@ -1,0 +1,41 @@
+# API Keys - 绝对不进Git
+.env
+.env.local
+.env.production
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Data & Logs
+data/
+logs/
+*.db
+*.sqlite3
+
+# Models & Checkpoints
+checkpoints/
+*.pth
+*.onnx
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Virtual Environment
+venv/
+.venv/
+env/

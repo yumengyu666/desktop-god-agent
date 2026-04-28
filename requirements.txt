@@ -1,0 +1,39 @@
+# Desktop God Agent - 依赖列表
+# 核心框架
+python-dotenv>=1.0.0
+pydantic>=2.0.0
+
+# 感知系统
+mss>=9.0.0                    # 高速屏幕截图
+uiautomation>=2.0.18          # Windows UI Automation
+PaddleOCR>=2.7.0              # OCR识别
+PaddlePaddle>=2.5.0           # PaddleOCR依赖
+Pillow>=10.0.0                # 图像处理
+
+# 执行引擎
+pywin32>=306                  # Win32 API (ctypes替代方案)
+pyautogui>=0.9.54             # 鼠标键盘控制(备用)
+
+# 双鼠标系统
+PyQt5>=5.15.0                 # 透明窗口覆盖
+pyqtgraph>=0.13.0             # 实时渲染(可选)
+
+# 模型网关
+openai>=1.0.0                 # DeepSeek兼容OpenAI API
+google-generativeai>=0.3.0    # Google AI / Gemini
+httpx>=0.25.0                 # 异步HTTP
+
+# 记忆系统
+sqlalchemy>=2.0.0             # ORM
+aiosqlite>=0.19.0             # 异步SQLite
+
+# 任务规划
+networkx>=3.0                 # DAG图
+
+# 安全审计
+cryptography>=41.0.0          # 加密存储
+
+# 工具
+psutil>=5.9.0                 # 进程管理
+rich>=13.0.0                  # 终端美化
+click>=8.1.0                  # CLI
